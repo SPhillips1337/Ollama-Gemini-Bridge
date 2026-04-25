@@ -1,55 +1,42 @@
 # Agentic Capabilities & Reasoning
 
-The Ollama-Gemini Bridge is designed to transform Gemini from a standard LLM into an autonomous agent capable of tool execution, structured reasoning, and long-term context retention across both **Ollama** and **OpenAI** protocols.
+The Ollama-Gemini Bridge transforms Gemini into a robust, context-intelligent autonomous agent with a transparent reasoning process.
 
-## 🧠 Reasoning Architecture
+## 🧠 Advanced Reasoning & UX
 
-### 1. Sequential Thinking
-By registering the `sequential-thinking` MCP server, Gemini gain access to a structured "thought buffer." 
-- **Internal Loop**: Before responding to a complex request, the model can use tools to break down the problem into steps.
-- **Chain of Thought**: This mimics advanced reasoning models (like o1) by forcing the model to validate its assumptions at each step.
+### 1. Transparent "Thought" Streaming
+Unlike standard bridges that hide tool-calling overhead, this bridge streams its thinking process to the client in real-time.
+- **UX feedback**: You will see messages like `> 🛠️ Calling tool: commit_memory...` in your UI before the final answer arrives.
+- **Transparency**: This allows you to verify that the agent is correctly utilizing its tools (Memory, Search, Reasoning) during the interaction.
 
-### 2. Context Gravity (LTM)
-The bridge implements the **Antigravity Agents Prompt Protocol**. This prevents "context gravity"—the tendency for an agent to lose focus or re-learn basic project rules over time.
-- **Bootstrap Phase**: On every chat request (Ollama or OpenAI), the bridge reads `.antigravity/memories/` and injects them into the System Message.
-- **Knowledge Ratcheting**: The model uses the `commit_memory` tool to "ratchet" its knowledge forward, ensuring that a lesson learned in one session is available in all future sessions.
+### 2. Context-Aware LTM (Simple RAG)
+To prevent context window saturation, the bridge implements a keyword-based retrieval system for **Long Term Memory**.
+- **Keyword Matching**: The bridge tokenizes your prompt and cross-references it against the memory index.
+- **Memory Injection**: Only the most relevant architectural decisions and codebase insights are injected into the system prompt.
+- **Performance**: All memory content is cached in memory for zero-latency injection.
 
-## 🛠️ Tool Calling & Execution
+### 3. Reliability Watchdog
+Agentic workflows often run for long periods. To ensure stability:
+- **Periodic Health Checks**: Every 60 seconds, the bridge pings all connected MCP servers.
+- **Self-Healing**: If a server (like a local Node.js MCP instance) crashes, the watchdog automatically re-spawns it and refreshes the tool cache without interrupting your active sessions.
 
-The bridge handles tool calling differently depending on the operating mode:
+## 🛠️ Tool Calling & Multi-turn Execution
 
-### Direct API Mode (Multi-turn Agent)
-In this mode, the bridge manages a recursive **Multi-turn Loop**:
-1. **Gemini**: Generates a `function_call` request.
-2. **Bridge**: Intercepts the request and identifies the correct local MCP server.
-3. **Execution**: The bridge executes the tool via STDIO and captures the result.
-4. **Feedback**: The bridge sends the tool output back to Gemini in a `function_response` part.
-5. **Iteration**: Gemini continues this loop (up to 5 times) until it has gathered all necessary data for its final answer.
+The bridge manages the complexity of Gemini's `function_call` schema automatically:
 
-*Note: This loop is fully supported on both the `/api/chat` (Ollama) and `/v1/chat/completions` (OpenAI) endpoints.*
+1. **Detection**: Recognizes when the model requires external data.
+2. **Local Routing**: Uses the **In-memory Tool Cache** to instantly find the correct MCP server.
+3. **Execution**: Performs the JSON-RPC call and captures the result.
+4. **Recursive Loop**: Feeds results back to Gemini (up to 5 times) to allow for complex, multi-step reasoning.
 
-### Keyless (CLI) Mode (Non-Interactive Wrapper)
-In this mode, tool calling is delegated to the **Gemini CLI's internal MCP engine**. 
-- **Non-Interactive Execution**: The bridge uses the `--prompt` flag to ensure the CLI does not hang waiting for input.
-- **Output Cleaning**: A dedicated cleaning engine strips ANSI codes, banners, and status messages to return pure model text.
-- **Simulated Streaming**: Since the CLI returns the full response at once, the bridge uses a word-by-word generator to provide the smooth "typing" experience expected by modern UIs.
+## 🚀 Keyless vs. Direct API Workflows
 
-## 🤖 Specialized Agents (CrewAI)
+| Feature | Keyless (CLI) | Direct (API) |
+|---------|---------------|--------------|
+| **Multi-turn Loop** | Handled by CLI | Handled by Bridge |
+| **Streaming** | Simulated | Native |
+| **Auth** | OAuth session | API Key |
+| **Stability** | High | Ultra-High |
 
-The bridge logic itself is refined by a crew of specialized agents defined in `crew_orchestrator.py`:
-
-| Agent | Responsibility |
-|-------|----------------|
-| **API Designer** | Ensures the FastAPI endpoints strictly adhere to both Ollama and OpenAI specs. |
-| **MCP Integrator** | Manages JSON-RPC transport and dynamic tool mapping. |
-| **Documentation Agent** | Maintains architectural clarity and usage guides. |
-
-## 🚀 How to Enable Full Reasoning
-To maximize the agentic performance of this bridge:
-1. Use **Direct API Mode** by setting `GEMINI_API_KEY`.
-2. Add reasoning tools to your `.env`:
-   ```env
-   MCP_SERVERS=npx -y @modelcontextprotocol/server-sequential-thinking, ...
-   ```
-3. Prompt the agent to save its work:
-   *"Summarize our design decision and commit it to memory."*
+## 🚀 Optimization Tip
+To maximize reasoning speed, ensure your most frequently used MCP servers are listed first in your `.env`. The bridge will prioritize them during the tool discovery phase.
