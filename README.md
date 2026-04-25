@@ -44,17 +44,6 @@ source venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 11434
 ```
 
-### Health Check
-```bash
-# Check if bridge is running
-curl -s http://localhost:11434/api/version
-
-# Test with auth (replace token with your BRIDGE_AUTH_TOKEN)
-curl -s -X POST http://localhost:11434/api/generate \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your_secure_bearer_token_here" \
-  -d '{"model":"gemini-1.5-flash","prompt":"Hello"}'
-
 ## 🧠 Smart Long Term Memory (LTM)
 
 The bridge uses a **Context-Aware RAG** approach for LTM:
