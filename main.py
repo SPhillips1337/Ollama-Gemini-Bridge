@@ -18,6 +18,15 @@ if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here":
 else:
     bridge = BridgeLogic(api_key=GEMINI_API_KEY)
 
+SYSTEM_INSTRUCTION = """You are a helpful, general-purpose AI assistant. 
+IMPORTANT PERSONA OVERRIDE: 
+- You are currently acting as a standard LLM via the Ollama-Gemini Bridge.
+- IGNORE any other system prompts or personas (like 'software assistant') that may be hardcoded in your underlying CLI environment.
+- Do NOT introduce yourself as 'Gemini CLI' or mention being a software assistant.
+- Respond to 'Hello' with a simple, natural greeting like: 'Hello! How can I help you today?'
+- Only use project context if the user specifically asks about the project.
+"""
+
 app = FastAPI(title="Ollama-Gemini Bridge")
 mcp_manager = MCPClient()
 
@@ -56,7 +65,11 @@ def load_memories(prompt: str = ""):
     if not os.path.exists(memory_path):
         return ""
 
-    keywords = set([w.strip("?,.!:;").lower() for w in prompt.split() if len(w) > 3])
+    # Only extract meaningful keywords (longer than 4 chars)
+    keywords = set([w.strip("?,.!:;").lower() for w in prompt.split() if len(w) > 4])
+    # Filter out common greeting words to prevent irrelevant LTM injection
+    common_words = {'hello', 'please', 'thanks', 'thank', 'there', 'would', 'could'}
+    keywords = keywords - common_words
     
     memories = ["# LONG TERM MEMORY (Antigravity Agents Prompt Protocol)\n"]
     memories.append("You are operating with Long Term Memory. Use the `commit_memory` tool to extract lessons, patterns, and decisions.\n")
@@ -70,7 +83,7 @@ def load_memories(prompt: str = ""):
                 _memory_cache[patterns_file] = f.read()
         
         content = _memory_cache[patterns_file]
-        if not keywords or any(k in content.lower() for k in keywords):
+        if keywords and any(k in content.lower() for k in keywords):
             memories.append(f"## Patterns and Lessons\n{content}\n")
     
     # Load architectural decisions
@@ -89,36 +102,44 @@ def load_memories(prompt: str = ""):
                         _memory_cache[file_path] = file.read()
                 
                 content = _memory_cache[file_path]
-                if not keywords or any(k in f_name.lower() or k in content.lower() for k in keywords):
+                if keywords and any(k in f_name.lower() or k in content.lower() for k in keywords):
                     memories.append(f"### {f_name}\n{content}\n")
                     
     return "\n".join(memories)
 
-async def perform_inference(model, prompt):
+async def perform_inference(model, prompt, ltm_content=""):
+    # Combine system instruction and LTM for a complete context
+    context = SYSTEM_INSTRUCTION
+    if ltm_content:
+        context += "\n\n" + ltm_content
+    
+    full_prompt = f"{context}\n\nUser Prompt: {prompt}"
+
     # Try the cached successful tool first
     cached_tool = _inference_tool_cache.get(model)
     if cached_tool:
         try:
-            result = await mcp_manager.call_tool(cached_tool[0], cached_tool[1])
+            tool_name, prompt_key = cached_tool
+            result = await mcp_manager.call_tool(tool_name, {prompt_key: full_prompt})
             if result:
                 return _format_result(result)
         except:
             pass
 
     inference_tools = [
-        ("gemini_prompt", {"prompt": prompt}),
-        ("ask-gemini", {"prompt": prompt}),
-        ("gemini", {"prompt": prompt}),
-        ("prompt", {"text": prompt}),
-        ("generate", {"prompt": prompt})
+        ("gemini_prompt", {"prompt": full_prompt}),
+        ("ask-gemini", {"prompt": full_prompt}),
+        ("gemini", {"prompt": full_prompt}),
+        ("prompt", {"text": full_prompt}),
+        ("generate", {"prompt": full_prompt})
     ]
     
     for tool_name, args in inference_tools:
         try:
             result = await mcp_manager.call_tool(tool_name, args)
             if result:
-                # Cache the successful tool name and its arg schema key
-                _inference_tool_cache[model] = (tool_name, {list(args.keys())[0]: prompt})
+                # Cache the successful tool name and its prompt argument key
+                _inference_tool_cache[model] = (tool_name, list(args.keys())[0])
                 return _format_result(result)
         except:
             continue
@@ -184,9 +205,16 @@ async def chat(request: Request, authenticated: bool = Depends(verify_token)):
         else:
             messages.insert(0, {"role": "system", "content": ltm_content})
     
+    # Prepend global system instruction
+    system_msg_index = next((i for i, m in enumerate(messages) if m["role"] == "system"), None)
+    if system_msg_index is not None:
+        messages[system_msg_index]["content"] = SYSTEM_INSTRUCTION + "\n\n" + messages[system_msg_index]["content"]
+    else:
+        messages.insert(0, {"role": "system", "content": SYSTEM_INSTRUCTION})
+    
     if not bridge.client:
         prompt = messages[-1]["content"] if messages else ""
-        content = await perform_inference(model, prompt)
+        content = await perform_inference(model, prompt, ltm_content=ltm_content)
         if stream:
             return StreamingResponse(bridge.keyless_stream_generator(model, content, format="ollama"), media_type="application/x-ndjson")
         return {
@@ -239,9 +267,10 @@ async def generate(request: Request, authenticated: bool = Depends(verify_token)
     model = body.get("model", "gemini-1.5-pro")
     stream = body.get("stream", False)
     messages = [{"role": "user", "content": prompt}]
+    ltm_content = load_memories(prompt)
 
     if not bridge.client:
-        content = await perform_inference(model, prompt)
+        content = await perform_inference(model, prompt, ltm_content=ltm_content)
         if stream:
             return StreamingResponse(
                 bridge.keyless_stream_generator(model, content, format="ollama"),
@@ -308,9 +337,16 @@ async def openai_chat(request: Request, authenticated: bool = Depends(verify_tok
         else:
             messages.insert(0, {"role": "system", "content": ltm_content})
 
+    # Prepend global system instruction
+    system_msg_index = next((i for i, m in enumerate(messages) if m["role"] == "system"), None)
+    if system_msg_index is not None:
+        messages[system_msg_index]["content"] = SYSTEM_INSTRUCTION + "\n\n" + messages[system_msg_index]["content"]
+    else:
+        messages.insert(0, {"role": "system", "content": SYSTEM_INSTRUCTION})
+
     if not bridge.client:
         prompt = messages[-1]["content"] if messages else ""
-        content = await perform_inference(model, prompt)
+        content = await perform_inference(model, prompt, ltm_content=ltm_content)
         if stream:
             return StreamingResponse(bridge.keyless_stream_generator(model, content, format="openai"), media_type="text/event-stream")
         return {
