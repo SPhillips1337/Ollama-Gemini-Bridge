@@ -7,8 +7,9 @@ A high-performance, Ollama and OpenAI-compatible HTTP bridge written in Python (
 - **Dual Protocol Support**:
     - **Ollama API**: Implements `/api/chat`, `/api/generate`, and `/api/tags`.
     - **OpenAI API**: Implements `/v1/chat/completions` and `/v1/models`.
+- **Public Discovery**: Discovery endpoints (`/v1/models`, `/api/tags`) are public, allowing tools like Hermes to verify the bridge without initial authentication.
 - **Dual Inference Modes**:
-    - **Keyless (CLI) Mode**: Uses your local `gemini` CLI OAuth session. No API key required in `.env`.
+    - **Keyless (CLI) Mode**: Uses your local `gemini` CLI OAuth session via a robust non-interactive wrapper. No API key required in `.env`.
     - **Direct API Mode**: Uses `GEMINI_API_KEY` for high-performance, multi-turn agentic workflows.
 - **Agentic MCP Integration**: Dynamically maps local Model Context Protocol (MCP) tools to Gemini.
 - **Long Term Memory (LTM)**: Implements the [Antigravity Agents Prompt Protocol](https://github.com/SPhillips1337/AntigravityAgentsPromptProtocol) for persistent codebase insights and architectural decisions.

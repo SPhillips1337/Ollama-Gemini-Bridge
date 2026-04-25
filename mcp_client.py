@@ -9,12 +9,14 @@ from mcp.client.stdio import stdio_client
 class MCPClient:
     def __init__(self):
         self.sessions: List[ClientSession] = []
+        self._server_commands: Dict[ClientSession, str] = {}
         self._exit_stack = AsyncExitStack()
 
     async def connect_to_server(self, command_str: str):
         try:
             # Handle potential CWD prefix: [CWD:/path/to/dir] command args...
             cwd = None
+            orig_command_str = command_str
             if command_str.startswith("[CWD:"):
                 end_idx = command_str.find("]")
                 cwd = command_str[5:end_idx]
@@ -38,9 +40,28 @@ class MCPClient:
             
             await session.initialize()
             self.sessions.append(session)
+            self._server_commands[session] = orig_command_str
             print(f"Successfully connected to MCP server: {command_str}")
         except Exception as e:
             print(f"Failed to connect to MCP server ({command_str}): {e}")
+
+    async def health_check(self):
+        dead_sessions = []
+        for session in self.sessions:
+            try:
+                # Ping the server with a simple list_tools call
+                await asyncio.wait_for(session.list_tools(), timeout=5.0)
+            except Exception as e:
+                print(f"MCP server health check failed for {self._server_commands.get(session, 'unknown')}: {e}")
+                dead_sessions.append(session)
+        
+        for session in dead_sessions:
+            cmd = self._server_commands.pop(session, None)
+            if session in self.sessions:
+                self.sessions.remove(session)
+            if cmd:
+                print(f"Attempting to reconnect to {cmd}...")
+                await self.connect_to_server(cmd)
 
     async def get_tools_for_gemini(self) -> List[Dict[str, Any]]:
         gemini_tools = []

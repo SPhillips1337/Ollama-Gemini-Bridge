@@ -21,6 +21,11 @@ else:
 app = FastAPI(title="Ollama-Gemini Bridge")
 mcp_manager = MCPClient()
 
+async def watchdog_task():
+    while True:
+        await asyncio.sleep(60)
+        await mcp_manager.health_check()
+
 @app.on_event("startup")
 async def startup_event():
     mcp_servers = os.getenv("MCP_SERVERS", "").split(",")
@@ -28,6 +33,7 @@ async def startup_event():
         server = server.strip()
         if server:
             await mcp_manager.connect_to_server(server)
+    asyncio.create_task(watchdog_task())
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -41,26 +47,34 @@ def verify_token(authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return True
 
-def load_memories():
+def load_memories(prompt: str = ""):
     memory_path = ".antigravity/memories"
     if not os.path.exists(memory_path):
         return ""
 
+    keywords = set([w.strip("?,.!:;").lower() for w in prompt.split() if len(w) > 3])
+    
     memories = ["# LONG TERM MEMORY (Antigravity Agents Prompt Protocol)\n"]
     memories.append("You are operating with Long Term Memory. Use the `commit_memory` tool to extract lessons, patterns, and decisions.\n")
 
+    # Load patterns and lessons
     patterns_file = os.path.join(memory_path, "patterns_and_lessons.md")
     if os.path.exists(patterns_file):
         with open(patterns_file, "r") as f:
-            memories.append(f"## Patterns and Lessons\n{f.read()}\n")
+            content = f.read()
+            if not keywords or any(k in content.lower() for k in keywords):
+                memories.append(f"## Patterns and Lessons\n{content}\n")
     
+    # Load architectural decisions
     arch_dir = os.path.join(memory_path, "architectural_decisions")
     if os.path.exists(arch_dir):
         memories.append("## Architectural Decisions\n")
-        for f in os.listdir(arch_dir):
-            if f.endswith(".md"):
-                with open(os.path.join(arch_dir, f), "r") as file:
-                    memories.append(f"### {f}\n{file.read()}\n")
+        for f_name in os.listdir(arch_dir):
+            if f_name.endswith(".md"):
+                with open(os.path.join(arch_dir, f_name), "r") as file:
+                    content = file.read()
+                    if not keywords or any(k in f_name.lower() or k in content.lower() for k in keywords):
+                        memories.append(f"### {f_name}\n{content}\n")
                     
     return "\n".join(memories)
 
@@ -88,6 +102,42 @@ async def perform_inference(model, prompt):
         return str(result)
     return "Error: No suitable MCP tool found for inference."
 
+async def streaming_processor(model, messages, contents, tools, format="ollama"):
+    max_turns = 5
+    current_turn = 0
+    while current_turn < max_turns:
+        response = await bridge.chat_completion(model, messages, contents=contents, tools=tools, stream=False)
+        candidate = response.candidates[0]
+        function_calls = [p.function_call for p in candidate.content.parts if p.function_call]
+        
+        if not function_calls:
+            # Final text response
+            if format == "ollama":
+                async for chunk in bridge.keyless_stream_generator(model, response.text, format="ollama"):
+                    yield chunk
+            else:
+                async for chunk in bridge.keyless_stream_generator(model, response.text, format="openai"):
+                    yield chunk
+            return
+
+        # Send thoughts
+        for fc in function_calls:
+            thought = f"> 🛠️ Calling tool: `{fc.name}`...\n"
+            if format == "ollama":
+                yield json.dumps({"model": model, "message": {"role": "assistant", "content": thought}, "done": False}) + "\n"
+            else:
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': thought}}]})}\n\n"
+
+        contents.append(candidate.content)
+        tool_parts = []
+        for fc in function_calls:
+            result = await mcp_manager.call_tool(fc.name, fc.args)
+            tool_parts.append(bridge.format_tool_response(fc.name, result))
+        
+        contents.append({"role": "user", "parts": tool_parts})
+        current_turn += 1
+    yield "Error: Max tool-calling turns reached"
+
 @app.post("/api/chat")
 async def chat(request: Request, authenticated: bool = Depends(verify_token)):
     body = await request.json()
@@ -95,7 +145,8 @@ async def chat(request: Request, authenticated: bool = Depends(verify_token)):
     messages = body.get("messages", [])
     stream = body.get("stream", False)
     
-    ltm_content = load_memories()
+    prompt = messages[-1]["content"] if messages else ""
+    ltm_content = load_memories(prompt)
     if ltm_content:
         system_msg_index = next((i for i, m in enumerate(messages) if m["role"] == "system"), None)
         if system_msg_index is not None:
@@ -124,8 +175,7 @@ async def chat(request: Request, authenticated: bool = Depends(verify_token)):
             contents.append({"role": bridge._map_role(role), "parts": [{"text": content}]})
 
     if stream:
-        gemini_stream = await bridge.chat_completion(model, messages, tools=tools, stream=True)
-        return StreamingResponse(bridge.stream_generator(model, gemini_stream), media_type="application/x-ndjson")
+        return StreamingResponse(streaming_processor(model, messages, contents, tools, format="ollama"), media_type="application/x-ndjson")
     else:
         max_turns = 5
         current_turn = 0
@@ -202,7 +252,8 @@ async def openai_chat(request: Request, authenticated: bool = Depends(verify_tok
     messages = body.get("messages", [])
     stream = body.get("stream", False)
     
-    ltm_content = load_memories()
+    prompt = messages[-1]["content"] if messages else ""
+    ltm_content = load_memories(prompt)
     if ltm_content:
         system_msg_index = next((i for i, m in enumerate(messages) if m["role"] == "system"), None)
         if system_msg_index is not None:
@@ -232,8 +283,7 @@ async def openai_chat(request: Request, authenticated: bool = Depends(verify_tok
             contents.append({"role": bridge._map_role(role), "parts": [{"text": content}]})
 
     if stream:
-        gemini_stream = await bridge.chat_completion(model, messages, tools=tools, stream=True)
-        return StreamingResponse(bridge.openai_stream_generator(model, gemini_stream), media_type="text/event-stream")
+        return StreamingResponse(streaming_processor(model, messages, contents, tools, format="openai"), media_type="text/event-stream")
     else:
         max_turns = 5
         current_turn = 0

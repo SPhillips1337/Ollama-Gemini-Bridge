@@ -28,11 +28,11 @@ In this mode, the bridge manages a recursive **Multi-turn Loop**:
 
 *Note: This loop is fully supported on both the `/api/chat` (Ollama) and `/v1/chat/completions` (OpenAI) endpoints.*
 
-### Keyless (CLI) Mode (Single-turn Wrapper)
+### Keyless (CLI) Mode (Non-Interactive Wrapper)
 In this mode, tool calling is delegated to the **Gemini CLI's internal MCP engine**. 
-- The bridge sends the prompt to the CLI.
-- The CLI uses its own configured MCP servers (defined in `~/.gemini/settings.json`) to execute tools.
-- The bridge returns the final textual output.
+- **Non-Interactive Execution**: The bridge uses the `--prompt` flag to ensure the CLI does not hang waiting for input.
+- **Output Cleaning**: A dedicated cleaning engine strips ANSI codes, banners, and status messages to return pure model text.
+- **Simulated Streaming**: Since the CLI returns the full response at once, the bridge uses a word-by-word generator to provide the smooth "typing" experience expected by modern UIs.
 
 ## 🤖 Specialized Agents (CrewAI)
 
