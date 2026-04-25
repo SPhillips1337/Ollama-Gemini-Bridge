@@ -63,19 +63,24 @@ class BridgeLogic:
             response={"result": result}
         )
 
-    async def stream_generator(self, model: str, gemini_stream):
+    async def openai_stream_generator(self, model: str, gemini_stream):
+        import uuid
+        chat_id = str(uuid.uuid4())
         async for chunk in gemini_stream:
             text = chunk.text or ""
-            ollama_chunk = {
+            openai_chunk = {
+                "id": chat_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
                 "model": model,
-                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-                "message": {"role": "assistant", "content": text},
-                "done": False
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": text},
+                        "finish_reason": None
+                    }
+                ]
             }
-            yield json.dumps(ollama_chunk) + "\n"
+            yield f"data: {json.dumps(openai_chunk)}\n\n"
         
-        yield json.dumps({
-            "model": model,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-            "done": True
-        }) + "\n"
+        yield "data: [DONE]\n\n"

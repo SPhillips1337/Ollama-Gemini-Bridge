@@ -1,6 +1,6 @@
 # Agentic Capabilities & Reasoning
 
-The Ollama-Gemini Bridge is designed to transform Gemini from a standard LLM into an autonomous agent capable of tool execution, structured reasoning, and long-term context retention.
+The Ollama-Gemini Bridge is designed to transform Gemini from a standard LLM into an autonomous agent capable of tool execution, structured reasoning, and long-term context retention across both **Ollama** and **OpenAI** protocols.
 
 ## 🧠 Reasoning Architecture
 
@@ -11,7 +11,7 @@ By registering the `sequential-thinking` MCP server, Gemini gain access to a str
 
 ### 2. Context Gravity (LTM)
 The bridge implements the **Antigravity Agents Prompt Protocol**. This prevents "context gravity"—the tendency for an agent to lose focus or re-learn basic project rules over time.
-- **Bootstrap Phase**: On every `/api/chat` request, the bridge reads `.antigravity/memories/` and injects them into the System Message.
+- **Bootstrap Phase**: On every chat request (Ollama or OpenAI), the bridge reads `.antigravity/memories/` and injects them into the System Message.
 - **Knowledge Ratcheting**: The model uses the `commit_memory` tool to "ratchet" its knowledge forward, ensuring that a lesson learned in one session is available in all future sessions.
 
 ## 🛠️ Tool Calling & Execution
@@ -26,6 +26,8 @@ In this mode, the bridge manages a recursive **Multi-turn Loop**:
 4. **Feedback**: The bridge sends the tool output back to Gemini in a `function_response` part.
 5. **Iteration**: Gemini continues this loop (up to 5 times) until it has gathered all necessary data for its final answer.
 
+*Note: This loop is fully supported on both the `/api/chat` (Ollama) and `/v1/chat/completions` (OpenAI) endpoints.*
+
 ### Keyless (CLI) Mode (Single-turn Wrapper)
 In this mode, tool calling is delegated to the **Gemini CLI's internal MCP engine**. 
 - The bridge sends the prompt to the CLI.
@@ -38,7 +40,7 @@ The bridge logic itself is refined by a crew of specialized agents defined in `c
 
 | Agent | Responsibility |
 |-------|----------------|
-| **API Designer** | Ensures the FastAPI endpoints strictly adhere to the Ollama spec. |
+| **API Designer** | Ensures the FastAPI endpoints strictly adhere to both Ollama and OpenAI specs. |
 | **MCP Integrator** | Manages JSON-RPC transport and dynamic tool mapping. |
 | **Documentation Agent** | Maintains architectural clarity and usage guides. |
 
