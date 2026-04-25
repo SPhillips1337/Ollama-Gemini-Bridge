@@ -10,6 +10,7 @@ class MCPClient:
     def __init__(self):
         self.sessions: List[ClientSession] = []
         self._server_commands: Dict[ClientSession, str] = {}
+        self._tool_cache: Dict[ClientSession, List[Any]] = {}
         self._exit_stack = AsyncExitStack()
 
     async def connect_to_server(self, command_str: str):
@@ -39,9 +40,14 @@ class MCPClient:
             session = await self._exit_stack.enter_async_context(ClientSession(read, write))
             
             await session.initialize()
+            
+            # Cache tools immediately on connection
+            tools_resp = await session.list_tools()
+            self._tool_cache[session] = tools_resp.tools
+            
             self.sessions.append(session)
             self._server_commands[session] = orig_command_str
-            print(f"Successfully connected to MCP server: {command_str}")
+            print(f"Successfully connected to MCP server and cached tools: {command_str}")
         except Exception as e:
             print(f"Failed to connect to MCP server ({command_str}): {e}")
 
@@ -49,14 +55,16 @@ class MCPClient:
         dead_sessions = []
         for session in self.sessions:
             try:
-                # Ping the server with a simple list_tools call
-                await asyncio.wait_for(session.list_tools(), timeout=5.0)
+                # Ping the server and refresh tool cache
+                tools_resp = await asyncio.wait_for(session.list_tools(), timeout=5.0)
+                self._tool_cache[session] = tools_resp.tools
             except Exception as e:
                 print(f"MCP server health check failed for {self._server_commands.get(session, 'unknown')}: {e}")
                 dead_sessions.append(session)
         
         for session in dead_sessions:
             cmd = self._server_commands.pop(session, None)
+            self._tool_cache.pop(session, None)
             if session in self.sessions:
                 self.sessions.remove(session)
             if cmd:
@@ -66,28 +74,25 @@ class MCPClient:
     async def get_tools_for_gemini(self) -> List[Dict[str, Any]]:
         gemini_tools = []
         for session in self.sessions:
-            try:
-                tools_resp = await session.list_tools()
-                for tool in tools_resp.tools:
-                    gemini_tools.append({
-                        "function_declarations": [
-                            {
-                                "name": tool.name,
-                                "description": tool.description,
-                                "parameters": tool.inputSchema
-                            }
-                        ]
-                    })
-            except Exception as e:
-                print(f"Error fetching tools from a session: {e}")
+            tools = self._tool_cache.get(session, [])
+            for tool in tools:
+                gemini_tools.append({
+                    "function_declarations": [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.inputSchema
+                        }
+                    ]
+                })
         return gemini_tools
 
     async def call_tool(self, name: str, arguments: dict):
         for session in self.sessions:
             try:
-                # Check if tool exists in this session first
-                tools_resp = await session.list_tools()
-                if not any(t.name == name for t in tools_resp.tools):
+                # Check if tool exists in cache first (instant local check)
+                tools = self._tool_cache.get(session, [])
+                if not any(t.name == name for t in tools):
                     continue
 
                 result = await session.call_tool(name, arguments)

@@ -47,6 +47,10 @@ def verify_token(authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return True
 
+# Performance Caches
+_inference_tool_cache = {}
+_memory_cache = {}
+
 def load_memories(prompt: str = ""):
     memory_path = ".antigravity/memories"
     if not os.path.exists(memory_path):
@@ -60,25 +64,47 @@ def load_memories(prompt: str = ""):
     # Load patterns and lessons
     patterns_file = os.path.join(memory_path, "patterns_and_lessons.md")
     if os.path.exists(patterns_file):
-        with open(patterns_file, "r") as f:
-            content = f.read()
-            if not keywords or any(k in content.lower() for k in keywords):
-                memories.append(f"## Patterns and Lessons\n{content}\n")
+        # Cache memory file content to avoid repeat disk reads
+        if patterns_file not in _memory_cache:
+            with open(patterns_file, "r") as f:
+                _memory_cache[patterns_file] = f.read()
+        
+        content = _memory_cache[patterns_file]
+        if not keywords or any(k in content.lower() for k in keywords):
+            memories.append(f"## Patterns and Lessons\n{content}\n")
     
     # Load architectural decisions
     arch_dir = os.path.join(memory_path, "architectural_decisions")
     if os.path.exists(arch_dir):
         memories.append("## Architectural Decisions\n")
-        for f_name in os.listdir(arch_dir):
+        # Optimization: Only list files once, cache the list
+        if arch_dir not in _memory_cache:
+            _memory_cache[arch_dir] = os.listdir(arch_dir)
+        
+        for f_name in _memory_cache[arch_dir]:
             if f_name.endswith(".md"):
-                with open(os.path.join(arch_dir, f_name), "r") as file:
-                    content = file.read()
-                    if not keywords or any(k in f_name.lower() or k in content.lower() for k in keywords):
-                        memories.append(f"### {f_name}\n{content}\n")
+                file_path = os.path.join(arch_dir, f_name)
+                if file_path not in _memory_cache:
+                    with open(file_path, "r") as file:
+                        _memory_cache[file_path] = file.read()
+                
+                content = _memory_cache[file_path]
+                if not keywords or any(k in f_name.lower() or k in content.lower() for k in keywords):
+                    memories.append(f"### {f_name}\n{content}\n")
                     
     return "\n".join(memories)
 
 async def perform_inference(model, prompt):
+    # Try the cached successful tool first
+    cached_tool = _inference_tool_cache.get(model)
+    if cached_tool:
+        try:
+            result = await mcp_manager.call_tool(cached_tool[0], cached_tool[1])
+            if result:
+                return _format_result(result)
+        except:
+            pass
+
     inference_tools = [
         ("gemini_prompt", {"prompt": prompt}),
         ("ask-gemini", {"prompt": prompt}),
@@ -87,20 +113,24 @@ async def perform_inference(model, prompt):
         ("generate", {"prompt": prompt})
     ]
     
-    result = None
     for tool_name, args in inference_tools:
         try:
             result = await mcp_manager.call_tool(tool_name, args)
             if result:
-                break
+                # Cache the successful tool name and its arg schema key
+                _inference_tool_cache[model] = (tool_name, {list(args.keys())[0]: prompt})
+                return _format_result(result)
         except:
             continue
     
+    return "Error: No suitable MCP tool found for inference."
+
+def _format_result(result):
     if result:
         if isinstance(result, list):
             return "\n".join(item.text for item in result if hasattr(item, 'text'))
         return str(result)
-    return "Error: No suitable MCP tool found for inference."
+    return ""
 
 async def streaming_processor(model, messages, contents, tools, format="ollama"):
     max_turns = 5
