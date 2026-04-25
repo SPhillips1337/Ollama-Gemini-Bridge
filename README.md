@@ -19,22 +19,28 @@ A high-performance, Ollama and OpenAI-compatible HTTP bridge written in Python (
 
 ## 🛠️ Quick Start
 
-### 1. Installation
+### 1. Installation & Configuration
+The easiest way to set up the bridge is using the interactive installation script:
+
 ```bash
-pip install -r requirements.txt
+# Clone the repo (if you haven't already)
+# git clone <repo_url>
+# cd ollama-gemini-bridge
+
+# Run the interactive installer
+./install.sh
 ```
 
-### 2. Configuration
-Create a `.env` file from the template:
-```env
-GEMINI_API_KEY=your_key_here
-BRIDGE_AUTH_TOKEN=your_secure_token
-# MCP Servers (Supports [CWD:/path] prefix)
-MCP_SERVERS=npx -y @modelcontextprotocol/server-everything,python3 gemini_cli_mcp.py,python3 mcp_memory_server.py
-```
+The script will:
+- Check for system dependencies (Python, Node.js, Gemini CLI).
+- Create a Python virtual environment.
+- Install all necessary packages.
+- **Interactively** configure your `.env` file (choosing between Keyless CLI or Direct API modes).
 
-### 3. Running the Bridge
+### 2. Running the Bridge
+Once installed, start the bridge with:
 ```bash
+source venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 11434
 ```
 
