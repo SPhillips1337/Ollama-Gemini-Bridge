@@ -106,6 +106,8 @@ async def chat(request: Request, authenticated: bool = Depends(verify_token)):
     if not bridge.client:
         prompt = messages[-1]["content"] if messages else ""
         content = await perform_inference(model, prompt)
+        if stream:
+            return StreamingResponse(bridge.keyless_stream_generator(model, content, format="ollama"), media_type="application/x-ndjson")
         return {
             "model": model,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
@@ -211,6 +213,8 @@ async def openai_chat(request: Request, authenticated: bool = Depends(verify_tok
     if not bridge.client:
         prompt = messages[-1]["content"] if messages else ""
         content = await perform_inference(model, prompt)
+        if stream:
+            return StreamingResponse(bridge.keyless_stream_generator(model, content, format="openai"), media_type="text/event-stream")
         return {
             "id": f"chatcmpl-{uuid.uuid4()}",
             "object": "chat.completion",

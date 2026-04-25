@@ -1,5 +1,6 @@
 import json
 import time
+import asyncio
 from typing import List, Dict, Any, AsyncGenerator
 from google import genai
 from google.genai import types
@@ -35,8 +36,7 @@ class BridgeLogic:
                 else:
                     contents.append(types.Content(role=self._map_role(role), parts=[types.Part.from_text(text=content)]))
         else:
-            # If contents are passed directly (for multi-turn), use them
-            system_instruction = None # Usually doesn't change in turns
+            system_instruction = None
 
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -62,6 +62,53 @@ class BridgeLogic:
             name=tool_name,
             response={"result": result}
         )
+
+    async def keyless_stream_generator(self, model: str, content: str, format: str = "ollama"):
+        import uuid
+        chat_id = str(uuid.uuid4())
+        words = content.split(' ')
+        for i, word in enumerate(words):
+            text = word + (' ' if i < len(words) - 1 else '')
+            if format == "ollama":
+                ollama_chunk = {
+                    "model": model,
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                    "message": {"role": "assistant", "content": text},
+                    "done": False
+                }
+                yield json.dumps(ollama_chunk) + "\n"
+            else: # openai
+                openai_chunk = {
+                    "id": chat_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]
+                }
+                yield f"data: {json.dumps(openai_chunk)}\n\n"
+            await asyncio.sleep(0.01)
+
+        if format == "ollama":
+            yield json.dumps({"model": model, "done": True}) + "\n"
+        else:
+            yield "data: [DONE]\n\n"
+
+    async def stream_generator(self, model: str, gemini_stream):
+        async for chunk in gemini_stream:
+            text = chunk.text or ""
+            ollama_chunk = {
+                "model": model,
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                "message": {"role": "assistant", "content": text},
+                "done": False
+            }
+            yield json.dumps(ollama_chunk) + "\n"
+        
+        yield json.dumps({
+            "model": model,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+            "done": True
+        }) + "\n"
 
     async def openai_stream_generator(self, model: str, gemini_stream):
         import uuid
