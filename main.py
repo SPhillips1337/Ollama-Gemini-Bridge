@@ -239,17 +239,34 @@ async def generate(request: Request, authenticated: bool = Depends(verify_token)
     model = body.get("model", "gemini-1.5-pro")
     stream = body.get("stream", False)
     messages = [{"role": "user", "content": prompt}]
-    
+
+    if not bridge.client:
+        content = await perform_inference(model, prompt)
+        if stream:
+            return StreamingResponse(
+                bridge.keyless_stream_generator(model, content, format="ollama"),
+                media_type="application/x-ndjson",
+            )
+        return {
+            "model": model,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+            "response": content,
+            "done": True,
+        }
+
     if stream:
         gemini_stream = await bridge.chat_completion(model, messages, stream=True)
-        return StreamingResponse(bridge.stream_generator(model, gemini_stream), media_type="application/x-ndjson")
+        return StreamingResponse(
+            bridge.stream_generator(model, gemini_stream),
+            media_type="application/x-ndjson",
+        )
     else:
         response = await bridge.chat_completion(model, messages, stream=False)
         return {
             "model": model,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
             "response": response.text,
-            "done": True
+            "done": True,
         }
 
 @app.get("/api/tags")

@@ -34,24 +34,34 @@ def clean_output(text: str) -> str:
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     text = ansi_escape.sub('', text)
     
-    # Remove the banner and status messages (look for the large block of ▀ or status lines)
-    # The actual content usually comes after a line of ▄▄▄... and before another block
-    # Or just look for the first line starting with ✦
     lines = text.split('\n')
     clean_lines = []
     capture = False
+    
     for line in lines:
-        if line.strip().startswith('✦'):
-            clean_lines.append(line.strip().lstrip('✦').strip())
+        stripped = line.strip()
+        # Skip empty lines or known noise
+        if not stripped or "[IDEClient]" in stripped:
+            continue
+            
+        if stripped.startswith('✦'):
+            clean_lines.append(stripped.lstrip('✦').strip())
             capture = True
         elif capture:
-            if '▀▀▀' in line or '▄▄▄' in line:
+            if '▀▀▀' in stripped or '▄▄▄' in stripped:
                 break
-            clean_lines.append(line)
+            clean_lines.append(line) # Keep original spacing for captured lines
             
     if not clean_lines:
-        # Fallback: if we didn't find the ✦ marker, just return the whole thing minus obvious banner lines
-        return "\n".join([l for line in lines if (l := line.strip()) and not any(x in l for x in ['Gemini CLI', 'Plan:', 'Signed in', 'ℹ'])])
+        # Fallback: filter out obvious infrastructure noise but keep content
+        noise_patterns = ['Plan:', 'Signed in', 'ℹ', '▀▀▀', '▄▄▄']
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not any(p in stripped for p in noise_patterns) and "[IDEClient]" not in stripped:
+                # Only filter "Gemini CLI" if it looks like a header (short line)
+                if "Gemini CLI" in stripped and len(stripped) < 30:
+                    continue
+                clean_lines.append(stripped)
         
     return "\n".join(clean_lines).strip()
 
