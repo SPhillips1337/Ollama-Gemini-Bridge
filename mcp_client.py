@@ -55,8 +55,8 @@ class MCPClient:
         dead_sessions = []
         for session in self.sessions:
             try:
-                # Ping the server and refresh tool cache
-                tools_resp = await asyncio.wait_for(session.list_tools(), timeout=5.0)
+                # Ping the server and refresh tool cache (increased timeout for slow CLIs)
+                tools_resp = await asyncio.wait_for(session.list_tools(), timeout=30.0)
                 self._tool_cache[session] = tools_resp.tools
             except Exception as e:
                 print(f"MCP server health check failed for {self._server_commands.get(session, 'unknown')}: {e}")
@@ -95,7 +95,8 @@ class MCPClient:
                 if not any(t.name == name for t in tools):
                     continue
 
-                result = await session.call_tool(name, arguments)
+                # Call tool with a generous timeout to allow for slow CLI responses
+                result = await asyncio.wait_for(session.call_tool(name, arguments), timeout=120.0)
                 return result.content
             except Exception as e:
                 print(f"Error calling tool {name} in a session: {e}")
