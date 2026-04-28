@@ -41,19 +41,28 @@ async def call_tool(name: str, arguments: dict):
         category = arguments["category"]
         title = arguments["title"]
         content = arguments["content"]
+
+        # Validation and Sanitization
+        if category not in ["codebase_insights", "architectural_decisions", "patterns"]:
+            return [TextContent(type="text", text=f"Error: Invalid category '{category}'")]
+
+        safe_title = os.path.basename(title)
+        if not safe_title or safe_title in ('.', '..'):
+            return [TextContent(type="text", text="Error: Invalid title")]
         
         base_path = ".antigravity/memories"
         
         if category == "patterns":
             file_path = os.path.join(base_path, "patterns_and_lessons.md")
             with open(file_path, "a") as f:
-                f.write(f"\n### {title}\n{content}\n")
+                f.write(f"\n### {safe_title}\n{content}\n")
         else:
             dir_path = os.path.join(base_path, category)
             os.makedirs(dir_path, exist_ok=True)
-            file_path = os.path.join(dir_path, f"{title.lower().replace(' ', '_')}.md")
+            file_name = f"{safe_title.lower().replace(' ', '_')}.md"
+            file_path = os.path.join(dir_path, file_name)
             with open(file_path, "w") as f:
-                f.write(f"# {title}\n\n{content}\n")
+                f.write(f"# {safe_title}\n\n{content}\n")
         
         return [TextContent(type="text", text=f"Successfully committed to {category} memory: {title}")]
 
