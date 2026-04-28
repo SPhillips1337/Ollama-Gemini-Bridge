@@ -197,7 +197,7 @@ async def chat(request: Request, authenticated: bool = Depends(verify_token)):
     stream = body.get("stream", False)
     
     prompt = messages[-1]["content"] if messages else ""
-    ltm_content = load_memories(prompt)
+    ltm_content = await asyncio.to_thread(load_memories, prompt)
     if ltm_content:
         system_msg_index = next((i for i, m in enumerate(messages) if m["role"] == "system"), None)
         if system_msg_index is not None:
@@ -267,7 +267,7 @@ async def generate(request: Request, authenticated: bool = Depends(verify_token)
     model = body.get("model", "gemini-1.5-pro")
     stream = body.get("stream", False)
     messages = [{"role": "user", "content": prompt}]
-    ltm_content = load_memories(prompt)
+    ltm_content = await asyncio.to_thread(load_memories, prompt)
 
     if not bridge.client:
         content = await perform_inference(model, prompt, ltm_content=ltm_content)
@@ -329,7 +329,7 @@ async def openai_chat(request: Request, authenticated: bool = Depends(verify_tok
     stream = body.get("stream", False)
     
     prompt = messages[-1]["content"] if messages else ""
-    ltm_content = load_memories(prompt)
+    ltm_content = await asyncio.to_thread(load_memories, prompt)
     if ltm_content:
         system_msg_index = next((i for i, m in enumerate(messages) if m["role"] == "system"), None)
         if system_msg_index is not None:
