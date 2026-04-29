@@ -3,6 +3,7 @@ import asyncio
 import time
 import json
 import uuid
+import threading
 from fastapi import FastAPI, Request, Header, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
@@ -59,6 +60,7 @@ def verify_token(authorization: str = Header(None)):
 # Performance Caches
 _inference_tool_cache = {}
 _memory_cache = {}
+_memory_lock = threading.Lock()
 
 def load_memories(prompt: str = ""):
     memory_path = ".antigravity/memories"
@@ -78,11 +80,13 @@ def load_memories(prompt: str = ""):
     patterns_file = os.path.join(memory_path, "patterns_and_lessons.md")
     if os.path.exists(patterns_file):
         # Cache memory file content to avoid repeat disk reads
-        if patterns_file not in _memory_cache:
-            with open(patterns_file, "r") as f:
-                _memory_cache[patterns_file] = f.read()
-        
-        content = _memory_cache[patterns_file]
+        with _memory_lock:
+            if patterns_file not in _memory_cache:
+                with open(patterns_file, "r") as f:
+                    _memory_cache[patterns_file] = f.read()
+            
+            content = _memory_cache[patterns_file]
+            
         if keywords and any(k in content.lower() for k in keywords):
             memories.append(f"## Patterns and Lessons\n{content}\n")
     
@@ -91,17 +95,22 @@ def load_memories(prompt: str = ""):
     if os.path.exists(arch_dir):
         memories.append("## Architectural Decisions\n")
         # Optimization: Only list files once, cache the list
-        if arch_dir not in _memory_cache:
-            _memory_cache[arch_dir] = os.listdir(arch_dir)
+        with _memory_lock:
+            if arch_dir not in _memory_cache:
+                _memory_cache[arch_dir] = os.listdir(arch_dir)
+            
+            files_to_process = _memory_cache[arch_dir]
         
-        for f_name in _memory_cache[arch_dir]:
+        for f_name in files_to_process:
             if f_name.endswith(".md"):
                 file_path = os.path.join(arch_dir, f_name)
-                if file_path not in _memory_cache:
-                    with open(file_path, "r") as file:
-                        _memory_cache[file_path] = file.read()
+                with _memory_lock:
+                    if file_path not in _memory_cache:
+                        with open(file_path, "r") as file:
+                            _memory_cache[file_path] = file.read()
+                    
+                    content = _memory_cache[file_path]
                 
-                content = _memory_cache[file_path]
                 if keywords and any(k in f_name.lower() or k in content.lower() for k in keywords):
                     memories.append(f"### {f_name}\n{content}\n")
                     
@@ -197,7 +206,7 @@ async def chat(request: Request, authenticated: bool = Depends(verify_token)):
     stream = body.get("stream", False)
     
     prompt = messages[-1]["content"] if messages else ""
-    ltm_content = load_memories(prompt)
+    ltm_content = await asyncio.to_thread(load_memories, prompt)
     if ltm_content:
         system_msg_index = next((i for i, m in enumerate(messages) if m["role"] == "system"), None)
         if system_msg_index is not None:
@@ -267,7 +276,7 @@ async def generate(request: Request, authenticated: bool = Depends(verify_token)
     model = body.get("model", "gemini-1.5-pro")
     stream = body.get("stream", False)
     messages = [{"role": "user", "content": prompt}]
-    ltm_content = load_memories(prompt)
+    ltm_content = await asyncio.to_thread(load_memories, prompt)
 
     if not bridge.client:
         content = await perform_inference(model, prompt, ltm_content=ltm_content)
@@ -329,7 +338,7 @@ async def openai_chat(request: Request, authenticated: bool = Depends(verify_tok
     stream = body.get("stream", False)
     
     prompt = messages[-1]["content"] if messages else ""
-    ltm_content = load_memories(prompt)
+    ltm_content = await asyncio.to_thread(load_memories, prompt)
     if ltm_content:
         system_msg_index = next((i for i, m in enumerate(messages) if m["role"] == "system"), None)
         if system_msg_index is not None:
